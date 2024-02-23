@@ -1624,7 +1624,7 @@ async function refactorCSS(inputCss: string): Promise<string> {
         });
     });
 
-    console.log('### styleOccurrences:', Object.entries(styleOccurrences).filter(([style, selectors]) => selectors.size > 1))
+    console.log('### styleOccurrences:', styleOccurrences)
     let sharedStylesBySelectorGroup: Record<string, Set<string>> = {};
 
     // First, group all selectors that share the same style
@@ -1639,30 +1639,104 @@ async function refactorCSS(inputCss: string): Promise<string> {
     });
 
     console.log('### sharedStylesBySelectorGroup:', sharedStylesBySelectorGroup);
-    let stylePairs: Record<string, Set<string>> = {};
+    type SelectorStyles = Record<string, string[]>;
+    type SelectorOccurrences = Record<string, SelectorStyles>;
+
+
+    let selectorOccurrences: SelectorOccurrences = {};
+
     Object.keys(sharedStylesBySelectorGroup).forEach(selectors => {
-        const selectorList = selectors.split(', ');
-        selectorList.forEach((selector, index) => {
-            for (let i = index + 1; i < selectorList.length; i++) {
-                const pair = [selector.trim(), selectorList[i].trim()].sort().join(', ');
-                if (!stylePairs[pair]) {
-                    stylePairs[pair] = new Set();
-                }
-                sharedStylesBySelectorGroup[selectors].forEach(style => {
-                    stylePairs[pair].add(style);
-                });
+        const selectorList = selectors.split(', ').map(selector => selector.trim());
+        const countedPairs = new Set<string>(); // Set to keep track of counted pairs
+    
+        selectorList.forEach(selector => {
+            if (!selectorOccurrences[selector]) {
+                selectorOccurrences[selector] = {};
             }
+    
+            selectorList.forEach(otherSelector => {
+                if (otherSelector !== selector) {
+                    const pair = [selector, otherSelector].sort().join(', '); // Sort to ensure unique pair regardless of order
+    
+                    if (!countedPairs.has(pair)) { // Check if this pair has already been counted in this group
+                        countedPairs.add(pair);
+    
+                        if (!selectorOccurrences[selector][otherSelector]) {
+                            selectorOccurrences[selector][otherSelector] = [];
+                        }
+    
+                        sharedStylesBySelectorGroup[selectors].forEach(style => {
+                            if (!selectorOccurrences[selector][otherSelector].includes(style)) {
+                                selectorOccurrences[selector][otherSelector].push(style);
+                            }
+                        });
+                    }
+                }
+            });
         });
     });
 
-    console.log('### stylePairs:', stylePairs);
+    console.log('### selectorOccurrences:', selectorOccurrences);
     let newClasses = '';
-    Object.entries(stylePairs).forEach(([pair, styles], index) => {
-        if (styles.size >= 2) { // Check if the pair has at least two shared styles
-            const className = `refactored-class-${index + 1}`;
-            newClasses += `/* Shared by: ${pair} */\n.${className} { ${Array.from(styles).join('; ')}; }\n`;
+    type StyleScore = {
+        score: number;
+        styles: string[];
+    };
+    type CalculatedScores = Record<string, StyleScore[]>;
+    
+    let topScores: StyleScore[] = [];
+    let calculatedScores: CalculatedScores = {};
+    
+    Object.keys(selectorOccurrences).forEach(parentSelector => {
+        let scoreDetails: StyleScore[] = [];
+        let childSelectors = Object.entries(selectorOccurrences[parentSelector]);
+    
+        // Sort child selectors by the length of their style arrays in descending order
+        childSelectors.sort((a, b) => b[1].length - a[1].length);
+    
+        childSelectors.forEach(([childSelector, styles], index) => {
+            if (styles.length < 2) return; // Skip arrays with less than 2 elements
+    
+            // Check if styles array already in topScores
+            const existingTopScoreIndex = topScores.findIndex(ts => ts.styles.length === styles.length && ts.styles.every((style, idx) => style === styles[idx]));
+            if (existingTopScoreIndex !== -1) {
+                topScores[existingTopScoreIndex].score++;
+                console.log(`Array already in top scores for selector '${parentSelector}', score incremented ${childSelector}`);
+                return;
+            }
+    
+            let originalNumber = 1;
+            // Check for matching style arrays in remaining child selectors
+            for (let i = index + 1; i < childSelectors.length; i++) {
+                let [nextChildSelector, nextStyles] = childSelectors[i];
+                if (styles.length === nextStyles.length && styles.every((style, idx) => style === nextStyles[idx])) {
+                    originalNumber++;
+                }
+            }
+    
+            let score = originalNumber * styles.length;
+            scoreDetails.push({ score, styles });
+    
+            // Optional: Remove matching entries to avoid recounting
+            childSelectors = childSelectors.filter(([sel, st]) => !(st.length === styles.length && st.every((style, idx) => style === styles[idx])));
+        });
+    
+        // Find the maximum score in scoreDetails and add it to topScores
+        if (scoreDetails.length > 0) {
+            let maxScoreDetail = scoreDetails.reduce((max, current) => (current.score > max.score) ? current : max);
+            topScores.push(maxScoreDetail);
         }
+    
+        calculatedScores[parentSelector] = scoreDetails;
     });
+    console.log('### topScores:', topScores);
+    console.log('### calculatedScores:', calculatedScores);
+    // Object.entries(selectorOccurrences).forEach(([pair, styles], index) => {
+    //     if (styles.size >= 2) { // Check if the pair has at least two shared styles
+    //         const className = `refactored-class-${index + 1}`;
+    //         newClasses += `/* Shared by: ${pair} */\n.${className} { ${Array.from(styles).join('; ')}; }\n`;
+    //     }
+    // });
 
     return formatCSS(newClasses + '\n');
 }
