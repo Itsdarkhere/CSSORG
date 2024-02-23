@@ -1600,8 +1600,27 @@ function formatCSS(css: string): string {
               .replace(/\n    }/g, '\n}');
 }
 
+
 async function refactorCSS(inputCss: string): Promise<string> {
     const root: Root = scss.parse(inputCss);
+    let styleOccurrences = extractStyleOccurrences(root);
+    console.log('### styleOccurrences:', styleOccurrences);
+
+    let sharedStylesBySelectorGroup = groupSharedStyles(styleOccurrences);
+    console.log('### sharedStylesBySelectorGroup:', sharedStylesBySelectorGroup);
+
+    let selectorOccurrences = calculateSelectorOccurrences(sharedStylesBySelectorGroup);
+    console.log('### selectorOccurrences:', selectorOccurrences);
+
+    let { topScores, calculatedScores } = calculateScores(selectorOccurrences);
+    console.log('### topScores:', topScores.filter(ts => ts.score !== ts.styles.length));
+    console.log('### calculatedScores:', calculatedScores);
+
+    let newClasses = generateNewClasses(selectorOccurrences);
+    return formatCSS(newClasses);
+}
+
+function extractStyleOccurrences(root: Root): Record<string, Set<string>> {
     let styleOccurrences: Record<string, Set<string>> = {};
 
     // Walk through each rule and consider only the deepest selector
@@ -1624,7 +1643,10 @@ async function refactorCSS(inputCss: string): Promise<string> {
         });
     });
 
-    console.log('### styleOccurrences:', styleOccurrences)
+    return styleOccurrences;
+}
+
+function groupSharedStyles(styleOccurrences: Record<string, Set<string>>): Record<string, Set<string>> {
     let sharedStylesBySelectorGroup: Record<string, Set<string>> = {};
 
     // First, group all selectors that share the same style
@@ -1638,11 +1660,13 @@ async function refactorCSS(inputCss: string): Promise<string> {
         }
     });
 
-    console.log('### sharedStylesBySelectorGroup:', sharedStylesBySelectorGroup);
-    type SelectorStyles = Record<string, string[]>;
-    type SelectorOccurrences = Record<string, SelectorStyles>;
+    return sharedStylesBySelectorGroup;
+}
 
+type SelectorStyles = Record<string, string[]>;
+type SelectorOccurrences = Record<string, SelectorStyles>;
 
+function calculateSelectorOccurrences(sharedStylesBySelectorGroup: Record<string, Set<string>>): SelectorOccurrences {
     let selectorOccurrences: SelectorOccurrences = {};
 
     Object.keys(sharedStylesBySelectorGroup).forEach(selectors => {
@@ -1676,14 +1700,16 @@ async function refactorCSS(inputCss: string): Promise<string> {
         });
     });
 
-    console.log('### selectorOccurrences:', selectorOccurrences);
-    let newClasses = '';
-    type StyleScore = {
-        score: number;
-        styles: string[];
-    };
-    type CalculatedScores = Record<string, StyleScore[]>;
-    
+    return selectorOccurrences;
+}
+
+type StyleScore = {
+    score: number;
+    styles: string[];
+};
+type CalculatedScores = Record<string, StyleScore[]>;
+
+function calculateScores(selectorOccurrences: SelectorOccurrences): { topScores: StyleScore[], calculatedScores: CalculatedScores } {
     let topScores: StyleScore[] = [];
     let calculatedScores: CalculatedScores = {};
     
@@ -1701,7 +1727,7 @@ async function refactorCSS(inputCss: string): Promise<string> {
             const existingTopScoreIndex = topScores.findIndex(ts => ts.styles.length === styles.length && ts.styles.every((style, idx) => style === styles[idx]));
             if (existingTopScoreIndex !== -1) {
                 topScores[existingTopScoreIndex].score++;
-                console.log(`Array already in top scores for selector '${parentSelector}', score incremented ${childSelector}`);
+                // console.log(`Array already in top scores for selector '${parentSelector}', score incremented ${childSelector}`);
                 return;
             }
     
@@ -1724,21 +1750,20 @@ async function refactorCSS(inputCss: string): Promise<string> {
         // Find the maximum score in scoreDetails and add it to topScores
         if (scoreDetails.length > 0) {
             let maxScoreDetail = scoreDetails.reduce((max, current) => (current.score > max.score) ? current : max);
+            // Max score appears once
             topScores.push(maxScoreDetail);
         }
     
         calculatedScores[parentSelector] = scoreDetails;
     });
-    console.log('### topScores:', topScores);
-    console.log('### calculatedScores:', calculatedScores);
-    // Object.entries(selectorOccurrences).forEach(([pair, styles], index) => {
-    //     if (styles.size >= 2) { // Check if the pair has at least two shared styles
-    //         const className = `refactored-class-${index + 1}`;
-    //         newClasses += `/* Shared by: ${pair} */\n.${className} { ${Array.from(styles).join('; ')}; }\n`;
-    //     }
-    // });
 
-    return formatCSS(newClasses + '\n');
+    return { topScores, calculatedScores };
+}
+
+function generateNewClasses(selectorOccurrences: SelectorOccurrences): string {
+    // Implementation of generating new classes...
+    let newClasses = '';
+    return newClasses;
 }
 
 export default function BiggerDaddy() {
